@@ -1,5 +1,4 @@
 #![feature(phase)]
-extern crate std;
 extern crate getopts;
 extern crate regex;
 extern crate time;
@@ -15,7 +14,6 @@ use time::Timespec;
 use core::fmt::{Show,Formatter,FormatError};
 use std::io::Command;
 use libc::funcs::c95::stdlib::exit;
-
 
 
 static RE:Regex = regex!(r"@[0-9]{8}-[0-9]{4}");
@@ -47,7 +45,13 @@ impl Snapshot {
             Ok(p) => p,
             Err(e) => fail!("failed to execute process: {}", e),
         };
-        let return_code = zfs_proc.wait();
+        let exit_status = match zfs_proc.wait() {
+            Err(e) => {fail!("Unable to destroy snapshot {}", e)},
+            Ok(o) => o
+        };
+        if !exit_status.success() {
+            fail!("Bad exit status {}", exit_status);
+        }
         println!("Deleted {}", self.snap);
         //if return_code.unwrap() != 0 {
         //    println!("Unable to destroy snapshot!");
@@ -126,22 +130,22 @@ fn list_of_snaps() -> Vec<Snapshot> {
 
 
 fn period(t: int) -> f32 {
-    t as f32 / 150.0f32
+    // bigger means more dense
+    t as f32 / 250.0f32
 }
 
 fn collect(mut snaps: Vec<Snapshot>) -> Vec<Snapshot> {
     let now = time::now().to_timespec().sec;
-    let mut tr_vec : std::vec::Vec<(f32, f32)> = std::vec::Vec::new();
 
     let mut idx = 0;
     let mut destroyed = 0i;
     loop {
         if idx >= snaps.len() { break; } 
-        let t:f32 = (now - snaps.get(idx).time.sec) as f32;
+        let t:f32 = (now - snaps[idx].time.sec) as f32;
         let radius:f32 = period(t as int);
         let mut new_snaps = std::vec::Vec::new();
         let mut iidx = 0;
-        for snap in snaps.move_iter() {
+        for snap in snaps.into_iter() {
             if t - radius > (now - snap.time.sec) as f32 || (now - snap.time.sec) as f32 > t || idx == iidx {
                 new_snaps.push(snap);
             } else {
@@ -188,7 +192,7 @@ fn main() {
 
     let mut snaps = list_of_snaps();
     snaps = collect(snaps);
-    for snap in snaps.iter() {
-        println!("{}", snap);
-    }
+    //for snap in snaps.iter() {
+    //    println!("{}", snap);
+    //}
 }
