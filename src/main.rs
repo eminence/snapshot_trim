@@ -1,25 +1,29 @@
-#![feature(phase)]
+#![feature(plugin)]
+
 extern crate getopts;
-extern crate regex;
 extern crate time;
 extern crate core;
 extern crate libc;
-extern crate semver;
-#[phase(plugin)] extern crate regex_macros;
+extern crate regex;
+
+#[plugin] #[no_link]
+extern crate regex_macros;
+
 use regex::Regex;
 use getopts::{optopt,optflag,getopts};
 use std::os;
 use std::io::BufferedReader;
 use time::Timespec;
-use core::fmt::{Show,Formatter,FormatError};
+use core::fmt::{Show,Formatter,Error};
 use std::io::Command;
 use libc::funcs::c95::stdlib::exit;
+use std::cmp::Ordering;
 
 
 static RE:Regex = regex!(r"@[0-9]{8}-[0-9]{4}");
 
 
-#[deriving(Show)]
+#[derive(Show)]
 enum SnapState {
     UNKNOWN,
     SAVE,
@@ -35,22 +39,22 @@ struct Snapshot {
 impl Snapshot {
     fn new(timestamp: &str, snap: String) -> Snapshot {
         let t = match time::strptime(timestamp, "%Y%m%d-%H%M") {
-            Err(e) => fail!(format!("{} - {}", e, snap.as_slice())),
+            Err(e) => panic!(format!("{} - {}", e, snap.as_slice())),
             Ok(t) => t
         };
-        Snapshot{snap:snap, state:UNKNOWN, time:t.to_timespec()}
+        Snapshot{snap:snap, state:SnapState::UNKNOWN, time:t.to_timespec()}
     }
     fn zfs_destroy(&self) {
         let mut zfs_proc = match Command::new("/sbin/zfs").arg("destroy").arg(self.snap.as_slice()).spawn() {
             Ok(p) => p,
-            Err(e) => fail!("failed to execute process: {}", e),
+            Err(e) => panic!("failed to execute process: {}", e),
         };
         let exit_status = match zfs_proc.wait() {
-            Err(e) => {fail!("Unable to destroy snapshot {}", e)},
+            Err(e) => {panic!("Unable to destroy snapshot {}", e)},
             Ok(o) => o
         };
         if !exit_status.success() {
-            fail!("Bad exit status {}", exit_status);
+            panic!("Bad exit status {}", exit_status);
         }
         println!("Deleted {}", self.snap);
         //if return_code.unwrap() != 0 {
@@ -60,8 +64,8 @@ impl Snapshot {
 }
 
 impl Show for Snapshot {
-    fn fmt(&self, fmt: &mut Formatter) -> Result<(), FormatError> {
-        fmt.write(format!("<Snapshot {} {}>", self.snap, self.state).as_bytes());
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
+        write!(fmt, "<Snapshot {:?} {:?}>", self.snap, self.state);
         Ok(())
     }
 }
@@ -84,13 +88,13 @@ impl PartialEq for Snapshot {
 
 
 
-fn list_of_snaps() -> Vec<Snapshot> {
+fn list_of_snaps(filesystem: &str) -> Vec<Snapshot> {
 
     let mut snaps = std::vec::Vec::new();
 
-    let mut zfs_proc = match Command::new("/sbin/zfs").args(["list", "-r", "-t", "snapshot", "storage/home/achin"]).spawn() {
+    let mut zfs_proc = match Command::new("/sbin/zfs").arg("list").arg("-r").arg("-t").arg("snapshot").arg(filesystem).spawn() {
           Ok(p) => p,
-          Err(e) => fail!("failed to execute process: {}", e),
+          Err(e) => panic!("failed to execute process: {}", e),
     };
 
     println!("New process is running: {}", zfs_proc.id());
@@ -98,7 +102,7 @@ fn list_of_snaps() -> Vec<Snapshot> {
     //let stdout_reader = BufferedReader::new(
     {
         let stdout = match zfs_proc.stdout {
-            None => fail!("no stdout"),
+            None => panic!("no stdout"),
             Some(ref mut t) => t.clone()
         };
         let mut buf_stdout = BufferedReader::new(stdout);
@@ -114,7 +118,10 @@ fn list_of_snaps() -> Vec<Snapshot> {
                     let m = RE.find(snapshot);
                     if m.is_some() {
                         let (s,e) = m.unwrap();
-                        snaps.push(Snapshot::new(snapshot.slice(s+1,e),snapshot.into_string()));
+                        let volume = snapshot.slice(0,s);
+                        if volume == filesystem {
+                            snaps.push(Snapshot::new(snapshot.slice(s+1,e),String::from_str(snapshot)));
+                        }
                     }
                 }
             };
@@ -129,20 +136,25 @@ fn list_of_snaps() -> Vec<Snapshot> {
 }
 
 
-fn period(t: int) -> f32 {
-    // bigger means more dense
-    t as f32 / 250.0f32
+fn period(t: f32) -> f32 {
+    // bigger constant means more dense snapshots
+    t/ 250.0f32
 }
 
+
+// algorithm by agrif (http://github.com/agrif/)
+// See this excellent demo: http://overviewer.org/~agrif/snapshotvis/
+// each snapshot (based on how old it is), will have a "radius" that indicates that any other
+// snapshots within the radius should be deleted
 fn collect(mut snaps: Vec<Snapshot>) -> Vec<Snapshot> {
     let now = time::now().to_timespec().sec;
 
     let mut idx = 0;
-    let mut destroyed = 0i;
+    let mut destroyed : i32 = 0;
     loop {
         if idx >= snaps.len() { break; } 
         let t:f32 = (now - snaps[idx].time.sec) as f32;
-        let radius:f32 = period(t as int);
+        let radius:f32 = period(t);
         let mut new_snaps = std::vec::Vec::new();
         let mut iidx = 0;
         for snap in snaps.into_iter() {
@@ -151,7 +163,7 @@ fn collect(mut snaps: Vec<Snapshot>) -> Vec<Snapshot> {
             } else {
                 snap.zfs_destroy();
                 destroyed += 1;
-                if destroyed >= 25 {
+                if destroyed >= 50 {
                     unsafe {exit(0); }
                 }
             }
@@ -171,26 +183,9 @@ fn collect(mut snaps: Vec<Snapshot>) -> Vec<Snapshot> {
 
 fn main() {
 
-    let args = os::args();
-
-    let opts = [
-        optopt("o", "", "output thingy", ""),
-        optflag("h", "help", "help output")
-            ];
 
 
-    let matches = match getopts(args.tail(), opts) {
-        Ok(m) => { m }
-        Err(f) => { fail!(f.to_err_msg()) }
-    };
-
-    if matches.opt_present("h") || matches.opt_present("help") {
-        //print_usage(program, opts);
-        return;
-    }
-
-
-    let mut snaps = list_of_snaps();
+    let mut snaps = list_of_snaps("storage/home/achin");
     snaps = collect(snaps);
     //for snap in snaps.iter() {
     //    println!("{}", snap);

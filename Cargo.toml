@@ -4,3 +4,9 @@ name = "snapshot_trim"
 version = "0.1.0"
 authors = [ "andrew@andrewchin.net" ]
 
+
+[dependencies]
+regex = "0.1.8"
+regex_macros = "0.1.5"
+time = "0.1.12"
+
