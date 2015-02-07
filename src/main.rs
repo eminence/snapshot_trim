@@ -12,10 +12,10 @@ extern crate regex_macros;
 use regex::Regex;
 use getopts::{optopt,optflag,getopts};
 use std::os;
-use std::io::BufferedReader;
+use std::old_io::BufferedReader;
 use time::Timespec;
 use core::fmt::{Show,Formatter,Error};
-use std::io::Command;
+use std::old_io::Command;
 use libc::funcs::c95::stdlib::exit;
 use std::cmp::Ordering;
 
