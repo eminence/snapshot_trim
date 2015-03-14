@@ -1,29 +1,22 @@
-#![feature(plugin)]
 
-extern crate getopts;
 extern crate time;
 extern crate core;
 extern crate libc;
 extern crate regex;
 
-#[plugin] #[no_link]
-extern crate regex_macros;
+
 
 use regex::Regex;
-use getopts::{optopt,optflag,getopts};
-use std::os;
-use std::old_io::BufferedReader;
+use std::io::{BufReader, BufRead};
 use time::Timespec;
-use core::fmt::{Show,Formatter,Error};
-use std::old_io::Command;
+use core::fmt::{Display,Formatter,Error};
+use std::process::Command;
+use std::process::Stdio;
 use libc::funcs::c95::stdlib::exit;
 use std::cmp::Ordering;
 
 
-static RE:Regex = regex!(r"@[0-9]{8}-[0-9]{4}");
-
-
-#[derive(Show)]
+#[derive(Debug)]
 enum SnapState {
     UNKNOWN,
     SAVE,
@@ -45,7 +38,7 @@ impl Snapshot {
         Snapshot{snap:snap, state:SnapState::UNKNOWN, time:t.to_timespec()}
     }
     fn zfs_destroy(&self) {
-        let mut zfs_proc = match Command::new("/sbin/zfs").arg("destroy").arg(self.snap.as_slice()).spawn() {
+        let mut zfs_proc = match Command::new("/sbin/zfs").arg("destroy").arg(self.snap.as_slice()).stdout(Stdio::piped()).spawn() {
             Ok(p) => p,
             Err(e) => panic!("failed to execute process: {}", e),
         };
@@ -63,7 +56,7 @@ impl Snapshot {
     }
 }
 
-impl Show for Snapshot {
+impl Display for Snapshot {
     fn fmt(&self, fmt: &mut Formatter) -> Result<(), Error> {
         write!(fmt, "<Snapshot {:?} {:?}>", self.snap, self.state);
         Ok(())
@@ -90,32 +83,39 @@ impl PartialEq for Snapshot {
 
 fn list_of_snaps(filesystem: &str) -> Vec<Snapshot> {
 
+    let re = match Regex::new("@[0-9]{8}-[0-9]{4}") {
+        Ok(re) => re,
+        Err(err) => panic!("{}", err)
+    };
+
     let mut snaps = std::vec::Vec::new();
 
-    let mut zfs_proc = match Command::new("/sbin/zfs").arg("list").arg("-r").arg("-t").arg("snapshot").arg(filesystem).spawn() {
+    let mut zfs_proc = match Command::new("/sbin/zfs").arg("list").arg("-r").arg("-t").arg("snapshot").arg(filesystem).stdout(Stdio::piped()).spawn() {
           Ok(p) => p,
           Err(e) => panic!("failed to execute process: {}", e),
     };
 
-    println!("New process is running: {}", zfs_proc.id());
+    println!("New process is running");
 
     //let stdout_reader = BufferedReader::new(
     {
         let stdout = match zfs_proc.stdout {
             None => panic!("no stdout"),
-            Some(ref mut t) => t.clone()
+            Some(ref mut t) => t
         };
-        let mut buf_stdout = BufferedReader::new(stdout);
+        let mut buf_stdout = BufReader::new(stdout);
 
         loop {
-            match buf_stdout.read_line() {
+            let mut std_out_line: String = String::new();
+            match buf_stdout.read_line(&mut std_out_line) {
                 Err(_) => break,
-                Ok(s) => {
-                    let snapshot:&str = match s.as_slice().split(' ').nth(0) {
+                Ok(_) => {
+                    if std_out_line.is_empty() { break; }
+                    let snapshot:&str = match std_out_line.as_slice().split(' ').nth(0) {
                         None => continue,
                         Some(s) => s
                     };
-                    let m = RE.find(snapshot);
+                    let m = re.find(snapshot);
                     if m.is_some() {
                         let (s,e) = m.unwrap();
                         let volume = snapshot.slice(0,s);
@@ -130,6 +130,9 @@ fn list_of_snaps(filesystem: &str) -> Vec<Snapshot> {
     }
 
     let return_code = zfs_proc.wait();
+    if return_code.is_err() {
+        println!("Warning! zfs has failed return code");
+    }
     snaps.sort();
     println!("Found a total of {} snapshots!", snaps.len());
     return snaps;
@@ -183,10 +186,8 @@ fn collect(mut snaps: Vec<Snapshot>) -> Vec<Snapshot> {
 
 fn main() {
 
-
-
-    let mut snaps = list_of_snaps("storage/home/achin");
-    snaps = collect(snaps);
+    let snaps = list_of_snaps("storage/home/achin");
+    collect(snaps);
     //for snap in snaps.iter() {
     //    println!("{}", snap);
     //}
