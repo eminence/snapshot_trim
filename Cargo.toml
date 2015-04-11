@@ -6,6 +6,8 @@ authors = [ "andrew@andrewchin.net" ]
 
 
 [dependencies]
-regex = "0.1.18"
-time = "0.1.19"
+regex = "*"
+time = "*"
+docopt = "*"
+rustc-serialize = "*"
 
