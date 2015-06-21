@@ -1,22 +1,22 @@
 #![feature(collections)]
+#![feature(path_ext)]
 
 extern crate time;
 //extern crate libc;
 extern crate regex;
-extern crate docopt;
 extern crate rustc_serialize;
+extern crate toml;
 
 use regex::Regex;
-use std::io::{BufReader, BufRead};
+use std::io::{Read, BufReader, BufRead};
 use time::Timespec;
 use std::fmt::{Display,Formatter,Error};
-use std::process::Command;
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::convert::AsRef;
-//use libc::funcs::c95::stdlib::exit;
 use std::cmp::Ordering;
-use docopt::Docopt;
-
+use std::path::Path;
+use std::fs::{PathExt, File};
+use std::borrow::Borrow;
 
 
 #[derive(Debug, PartialEq, Eq)]
@@ -188,28 +188,55 @@ fn collect<F>(mut snaps: Vec<Snapshot>, period: F) -> Vec<Snapshot>
 
         idx += 1;
     }
+    println!("Deleted a total of {} snapshots", destroyed);
     return snaps
 
 }
 
-static USAGE: &'static str = "
-Usage: snapshot_trim <source>
-";
-
-#[derive(RustcDecodable, Debug)]
-struct Args {
-    arg_source: String,
-}
 
 fn main() {
-    let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.decode())
-        .unwrap_or_else(|e| e.exit());
 
-    println!("Scanning {}" ,args.arg_source);
+    let conf_path = Path::new("/storage/home/achin/.snapshot.toml");
+    if !conf_path.exists() {
+        panic!("{} Error: ~/.snapshot.toml doesn't exist");
+    }
 
-    let snaps = list_of_snaps("storage/home/achin");
-    collect(snaps, |x| x/250.0f32);
+    let mut conf_file = match File::open(&conf_path) {
+        Err(e) => panic!("Failed to open conf_path {}", e),
+        Ok(f) => f
+    };
+
+    let mut toml_conf = String::new();
+    conf_file.read_to_string(&mut toml_conf).unwrap();
+
+    let parsed_toml = toml::Parser::new(toml_conf.borrow()).parse();
+
+    if parsed_toml.is_none() {
+        println!("Error parsing config file");
+        return;
+    }
+
+    for (fs, data) in parsed_toml.unwrap() {
+        let datatable = match data {
+            toml::Value::Table(d) => d,
+            _ => panic!("Unexpected data type")
+        };
+
+        let period : i64 = match datatable.get("period") {
+            Some(p) => p.as_integer().expect("Unexpected data type for period value"),
+            None => panic!("Missing period")
+        };
+
+        println!("Scanning {}, purging with period={}", fs, period);
+        let snaps = list_of_snaps(fs.borrow());
+        collect(snaps, |x| x/period as f32);
+
+
+    }
+
+    // use 250 for storage/home/achin
+    // use 15 for storage/home/achin/tmp
+
     //for snap in snaps.iter() {
     //    println!("{}", snap);
     //}

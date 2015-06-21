@@ -10,4 +10,4 @@ regex = "*"
 time = "*"
 docopt = "*"
 rustc-serialize = "*"
-
+toml = "*"
