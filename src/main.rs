@@ -1,6 +1,3 @@
-#![feature(collections)]
-#![feature(path_ext)]
-
 extern crate time;
 //extern crate libc;
 extern crate regex;
@@ -15,8 +12,9 @@ use std::process::{Command, Stdio};
 use std::convert::AsRef;
 use std::cmp::Ordering;
 use std::path::Path;
-use std::fs::{PathExt, File};
+use std::fs::File;
 use std::borrow::Borrow;
+use std::str::FromStr;
 
 
 #[derive(Debug, PartialEq, Eq)]
@@ -127,7 +125,7 @@ fn list_of_snaps(filesystem: &str) -> Vec<Snapshot> {
                         let (s,e) = m.unwrap();
                         let volume = &snapshot[0..s];
                         if volume == filesystem {
-                            snaps.push(Snapshot::new(&snapshot[s+1..e],String::from_str(snapshot)));
+                            snaps.push(Snapshot::new(&snapshot[s+1..e],String::from_str(snapshot).unwrap()));
                         }
                     }
                 }
