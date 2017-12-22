@@ -122,7 +122,8 @@ fn list_of_snaps(filesystem: &str) -> Vec<Snapshot> {
                     };
                     let m = re.find(snapshot);
                     if m.is_some() {
-                        let (s,e) = m.unwrap();
+                        let m = m.unwrap();
+                        let (s,e) = (m.start(), m.end());
                         let volume = &snapshot[0..s];
                         if volume == filesystem {
                             snaps.push(Snapshot::new(&snapshot[s+1..e],String::from_str(snapshot).unwrap()));
@@ -207,14 +208,19 @@ fn main() {
     let mut toml_conf = String::new();
     conf_file.read_to_string(&mut toml_conf).unwrap();
 
-    let parsed_toml = toml::Parser::new(toml_conf.borrow()).parse();
+    let parsed_toml = toml_conf.parse::<toml::Value>();
 
-    if parsed_toml.is_none() {
+    if parsed_toml.is_err() {
         println!("Error parsing config file");
         return;
     }
 
-    for (fs, data) in parsed_toml.unwrap() {
+    let main_data = match parsed_toml.unwrap() {
+        toml::Value::Table(t) =>  t,
+        x => panic!("Unexpected data in snapshot.toml: {:?}", x)
+    };
+
+    for (fs, data) in main_data {
         let datatable = match data {
             toml::Value::Table(d) => d,
             _ => panic!("Unexpected data type")
